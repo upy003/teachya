@@ -72,7 +72,8 @@ export function PracticePage() {
         {config.mode === 'falling' ? (
           <FallingNotesCanvas />
         ) : (
-          <div className="h-full overflow-auto bg-neutral-950">
+          // Sheet music mode: SheetMusicRenderer handles its own background/scroll
+          <div className="absolute inset-0 overflow-auto">
             <SheetMusicRenderer showCursor={playbackState !== 'idle'} />
           </div>
         )}
