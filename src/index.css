@@ -1,0 +1,110 @@
+/* Google Fonts must come before @import "tailwindcss" to avoid CSS lint warning */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* Tailwind CSS v4 base import */
+@import "tailwindcss";
+
+/* ── Custom CSS Variables ──────────────────────────────────────────── */
+:root {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Brand colors */
+  --color-violet-500: #8b5cf6;
+  --color-violet-600: #7c3aed;
+  --color-cyan-400: #22d3ee;
+
+  /* Surface colors */
+  --surface-base: #0a0a0f;
+  --surface-card: rgba(255, 255, 255, 0.04);
+  --surface-border: rgba(255, 255, 255, 0.08);
+
+  color-scheme: dark;
+}
+
+/* ── Base Styles ───────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--surface-base);
+  color: rgba(255, 255, 255, 0.9);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden; /* App handles its own scroll */
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Scrollbar Styling ─────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ── OSMD Sheet Music Dark Theme Override ─────────────────────────── */
+.osmd-container svg {
+  background: transparent !important;
+}
+
+/* ── Canvas Rendering ──────────────────────────────────────────────── */
+canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* ── Tailwind custom theme extensions ─────────────────────────────── */
+@theme {
+  --font-family-sans: 'Inter', system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', monospace;
+
+  --color-neutral-950: #0a0a0f;
+  --color-neutral-900: #111118;
+  --color-neutral-800: #1c1c26;
+
+  --color-violet-400: #a78bfa;
+  --color-violet-500: #8b5cf6;
+  --color-violet-600: #7c3aed;
+
+  --color-cyan-400: #22d3ee;
+  --color-emerald-400: #34d399;
+  --color-amber-400: #fbbf24;
+  --color-red-400: #f87171;
+}
+
+/* ── Animation utilities ───────────────────────────────────────────── */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.04) 0%,
+    rgba(255,255,255,0.1) 50%,
+    rgba(255,255,255,0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite linear;
+}
