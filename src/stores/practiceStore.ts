@@ -13,7 +13,7 @@ import type {
 const defaultConfig: PracticeConfig = {
   mode: 'falling',
   handMode: 'both',
-  style: 'waitForNote',
+  style: 'stream', // Default to stream so the app works without MIDI immediately
   tempoMultiplier: 1.0,
   loop: { startBeat: 0, endBeat: 0, enabled: false },
   showNoteNames: false,

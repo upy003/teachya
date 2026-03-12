@@ -1,13 +1,23 @@
 import { Play, Pause, Square, RotateCcw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { usePracticeStore } from '../../stores/practiceStore';
-import { usePractice } from '../../hooks/usePractice';
 import { Button } from '../ui/Button';
 import { Slider } from '../ui/Slider';
 import clsx from 'clsx';
 
-/** Transport controls and practice configuration panel */
-export function PracticeControls() {
+interface PracticeControlsProps {
+  /** Passed from PracticePage (which owns the single usePractice instance) */
+  startSession: () => void;
+  togglePause: () => void;
+  stopSession: () => void;
+}
+
+/**
+ * Transport controls and practice configuration panel.
+ * Does NOT call usePractice() — transport callbacks are passed as props
+ * to ensure there is only one game loop in the app.
+ */
+export function PracticeControls({ startSession, togglePause, stopSession }: PracticeControlsProps) {
   const {
     config,
     playbackState,
@@ -19,13 +29,11 @@ export function PracticeControls() {
     toggleGuidanceAudio,
   } = usePracticeStore();
 
-  const { startSession, togglePause, stopSession } = usePractice();
-
   const isPlaying = playbackState === 'playing';
   const isActive = playbackState === 'playing' || playbackState === 'paused';
 
   return (
-    <div className="flex flex-col gap-4 p-4 bg-neutral-900/80 border-t border-white/8 backdrop-blur-xl">
+    <div className="flex flex-col gap-3 p-4 bg-neutral-900/90 border-t border-white/8 backdrop-blur-xl shrink-0">
       {/* Stats row */}
       <div className="flex gap-6 justify-center text-center">
         <StatItem label="Accuracy" value={`${stats.accuracy}%`} highlight={stats.accuracy >= 80} />
@@ -45,19 +53,20 @@ export function PracticeControls() {
           icon={<Square size={16} />}
         />
 
-        {/* Play / Pause */}
+        {/* Play / Pause — the big round button */}
         <motion.button
           whileTap={{ scale: 0.94 }}
           onClick={isActive ? togglePause : startSession}
           className={clsx(
             'w-14 h-14 rounded-full flex items-center justify-center',
             'text-white shadow-2xl transition-colors',
-            isPlaying
-              ? 'bg-violet-600 hover:bg-violet-500 shadow-violet-900/60'
-              : 'bg-violet-600 hover:bg-violet-500 shadow-violet-900/60',
+            'bg-violet-600 hover:bg-violet-500 shadow-violet-900/60',
           )}
         >
-          {isPlaying ? <Pause size={22} /> : <Play size={22} className="translate-x-0.5" />}
+          {isPlaying
+            ? <Pause size={22} />
+            : <Play size={22} className="translate-x-0.5" />
+          }
         </motion.button>
 
         {/* Restart */}
@@ -71,7 +80,6 @@ export function PracticeControls() {
 
       {/* Configuration row */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {/* Mode selector */}
         <SegmentControl
           label="Mode"
           options={[
@@ -82,24 +90,22 @@ export function PracticeControls() {
           onChange={(v) => setMode(v as 'falling' | 'sheet')}
         />
 
-        {/* Style selector */}
         <SegmentControl
           label="Style"
           options={[
-            { value: 'waitForNote', label: 'Wait' },
             { value: 'stream', label: 'Stream' },
+            { value: 'waitForNote', label: 'Wait' },
           ]}
           value={config.style}
           onChange={(v) => setStyle(v as 'waitForNote' | 'stream')}
         />
 
-        {/* Hand selector */}
         <SegmentControl
           label="Hands"
           options={[
             { value: 'both', label: 'Both' },
-            { value: 'right', label: 'Right' },
-            { value: 'left', label: 'Left' },
+            { value: 'right', label: 'R' },
+            { value: 'left', label: 'L' },
           ]}
           value={config.handMode}
           onChange={(v) => setHandMode(v as 'both' | 'right' | 'left')}
@@ -123,7 +129,7 @@ export function PracticeControls() {
       </div>
 
       {/* Tempo slider */}
-      <div className="px-2">
+      <div className="px-1">
         <Slider
           label="Tempo"
           displayValue={`${Math.round(config.tempoMultiplier * 100)}%`}
@@ -138,14 +144,10 @@ export function PracticeControls() {
   );
 }
 
-/** A small key-value stat display */
 function StatItem({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div>
-      <div className={clsx(
-        'text-lg font-bold font-mono',
-        highlight ? 'text-emerald-400' : 'text-white',
-      )}>
+      <div className={clsx('text-lg font-bold font-mono', highlight ? 'text-emerald-400' : 'text-white')}>
         {value}
       </div>
       <div className="text-xs text-white/40">{label}</div>
@@ -153,12 +155,8 @@ function StatItem({ label, value, highlight }: { label: string; value: string; h
   );
 }
 
-interface SegmentOption {
-  value: string;
-  label: string;
-}
+interface SegmentOption { value: string; label: string; }
 
-/** A segmented control (tab group) */
 function SegmentControl({
   label, options, value, onChange,
 }: {

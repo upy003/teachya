@@ -5,14 +5,15 @@ import { useMIDIStore } from '../stores/midiStore';
 import {
   buildNoteTimeline,
   getExpectedNotesAtBeat,
-  playGuidanceNotes,
 } from '../lib/practice/PracticeEngine';
 import { audioEngine } from '../lib/audio/AudioEngine';
 import type { NoteTimeline } from '../types/Score';
 
 /**
  * usePractice is the central practice session hook.
- * It manages the game loop, note matching, and state transitions.
+ * IMPORTANT: This hook must be called only ONCE per practice session
+ * to avoid duplicate game loops. Call it in PracticePage and pass
+ * startSession/togglePause/stopSession as props where needed.
  */
 export function usePractice() {
   const { score } = useScoreStore();
@@ -20,7 +21,6 @@ export function usePractice() {
     config,
     playbackState,
     currentBeat,
-    nextNoteIndex,
     setPlaybackState,
     setCurrentBeat,
     setNextNoteIndex,
@@ -31,16 +31,33 @@ export function usePractice() {
 
   const { lastNoteEvent } = useMIDIStore();
 
-  // Mutable refs to avoid stale closures in the game loop
+  // --- Mutable refs (avoid stale closures in the async RAF loop) ---
   const timelineRef = useRef<NoteTimeline>([]);
-  const beatRef = useRef(currentBeat);
-  const nextIndexRef = useRef(nextNoteIndex);
+  const beatRef = useRef(0);             // Ground truth for current beat (updated in-loop)
+  const nextIndexRef = useRef(0);
   const lastTickTimeRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const waitingForNotesRef = useRef<Set<number>>(new Set());
 
-  beatRef.current = currentBeat;
-  nextIndexRef.current = nextNoteIndex;
+  // Snapshot refs for config/score so the tick doesn't need deps
+  const configRef = useRef(config);
+  const scoreRef = useRef(score);
+  const playbackStateRef = useRef(playbackState);
+  const setCurrentBeatRef = useRef(setCurrentBeat);
+  const setNextNoteIndexRef = useRef(setNextNoteIndex);
+  const setPlaybackStateRef = useRef(setPlaybackState);
+  const recordCorrectRef = useRef(recordCorrect);
+  const recordMissedRef = useRef(recordMissed);
+
+  // Keep all snapshot refs up-to-date on every render (runs during render phase)
+  configRef.current = config;
+  scoreRef.current = score;
+  playbackStateRef.current = playbackState;
+  setCurrentBeatRef.current = setCurrentBeat;
+  setNextNoteIndexRef.current = setNextNoteIndex;
+  setPlaybackStateRef.current = setPlaybackState;
+  recordCorrectRef.current = recordCorrect;
+  recordMissedRef.current = recordMissed;
 
   // Rebuild timeline whenever score or config changes
   useEffect(() => {
@@ -49,152 +66,193 @@ export function usePractice() {
     }
   }, [score, config]);
 
-  /** The main game loop tick, called every ~16ms */
-  const tick = useCallback(
-    (timestamp: number) => {
-      if (playbackState !== 'playing') return;
+  /**
+   * The tick function stored in a ref so it is always up-to-date inside RAF.
+   * RAF always calls tickRef.current() which is the latest version.
+   */
+  const tickRef = useRef<(timestamp: number) => void>(() => {});
 
-      const delta = lastTickTimeRef.current
-        ? (timestamp - lastTickTimeRef.current) / 1000
-        : 0;
-      lastTickTimeRef.current = timestamp;
+  tickRef.current = (timestamp: number) => {
+    if (playbackStateRef.current !== 'playing') return;
 
-      const bpm = (score?.defaultTempo ?? 120) * config.tempoMultiplier;
-      const beatsPerSecond = bpm / 60;
-      const timeline = timelineRef.current;
+    const delta = lastTickTimeRef.current
+      ? (timestamp - lastTickTimeRef.current) / 1000
+      : 0;
+    lastTickTimeRef.current = timestamp;
 
-      if (config.style === 'stream') {
-        // In stream mode, advance playhead automatically at tempo
-        const newBeat = beatRef.current + delta * beatsPerSecond;
+    const cfg = configRef.current;
+    const sc = scoreRef.current;
+    const bpm = (sc?.defaultTempo ?? 120) * cfg.tempoMultiplier;
+    const beatsPerSecond = bpm / 60;
+    const timeline = timelineRef.current;
 
-        // Check for notes that should have been played (in the window we just passed)
-        const expectedNow = getExpectedNotesAtBeat(timeline, newBeat, 0.08);
-        if (config.guidanceAudio && expectedNow.length > 0) {
-          playGuidanceNotes(timeline, newBeat, 0.08);
+    if (cfg.style === 'stream') {
+      // Advance the beat position forward by elapsed time
+      const newBeat = beatRef.current + delta * beatsPerSecond;
+
+      // Play guidance audio for notes that we just passed
+      if (cfg.guidanceAudio && audioEngine.ready) {
+        for (const note of timeline) {
+          // A note falls within the window we just advanced over
+          if (
+            note.midi !== null &&
+            !note.isRest &&
+            note.startTime > beatRef.current &&
+            note.startTime <= newBeat
+          ) {
+            audioEngine.playNote(note.midi, 65);
+          }
         }
-
-        setCurrentBeat(newBeat);
-
-        // Advance next note index
-        while (
-          nextIndexRef.current < timeline.length &&
-          timeline[nextIndexRef.current].startTime < newBeat - 0.1
-        ) {
-          nextIndexRef.current++;
-        }
-        setNextNoteIndex(nextIndexRef.current);
-
-        // End of piece
-        if (score && newBeat >= score.totalBeats) {
-          setPlaybackState('finished');
-          return;
-        }
-      } else {
-        // In waitForNote mode, the playhead only advances when the player presses notes
-        // (handled in the MIDI effect below)
       }
 
-      rafRef.current = requestAnimationFrame(tick);
-    },
-    [playbackState, score, config, setCurrentBeat, setNextNoteIndex, setPlaybackState],
-  );
+      // Update beat ref IMMEDIATELY (before React re-render)
+      beatRef.current = newBeat;
+      setCurrentBeatRef.current(newBeat);
 
-  // Start/stop the game loop
+      // Advance the next-note index pointer
+      while (
+        nextIndexRef.current < timeline.length &&
+        timeline[nextIndexRef.current]!.startTime < newBeat - 0.05
+      ) {
+        nextIndexRef.current++;
+      }
+      setNextNoteIndexRef.current(nextIndexRef.current);
+
+      // End of piece
+      if (sc && newBeat >= sc.totalBeats) {
+        setPlaybackStateRef.current('finished');
+        return;
+      }
+    }
+    // In waitForNote mode the beat is advanced by MIDI events (handled below)
+
+    // Schedule next frame using the ref to always call the latest tick version
+    rafRef.current = requestAnimationFrame(tickRef.current);
+  };
+
+  // --- Game loop lifecycle: start/stop when playbackState changes ---
   useEffect(() => {
     if (playbackState === 'playing') {
       lastTickTimeRef.current = null;
-      rafRef.current = requestAnimationFrame(tick);
+      rafRef.current = requestAnimationFrame(tickRef.current);
     } else {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     }
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     };
-  }, [playbackState, tick]);
+  }, [playbackState]); // Only restart loop on playbackState change
 
-  // Handle incoming MIDI note events for note matching
+  // --- MIDI note matching for waitForNote mode ---
   useEffect(() => {
     if (!lastNoteEvent?.isNoteOn || playbackState !== 'playing') return;
 
     const timeline = timelineRef.current;
     const midi = lastNoteEvent.midi;
+    const cfg = configRef.current;
 
-    if (config.style === 'waitForNote') {
-      // Find expected notes at or near the current playhead
-      const expected = getExpectedNotesAtBeat(timeline, beatRef.current, 0.5);
+    if (cfg.style === 'waitForNote') {
+      // Look for the expected note(s) at or near the current beat position
+      const expected = getExpectedNotesAtBeat(timeline, beatRef.current, 0.3);
       const expectedMidis = expected.map((n) => n.midi);
 
       if (expectedMidis.includes(midi)) {
-        recordCorrect();
+        recordCorrectRef.current();
         waitingForNotesRef.current.delete(midi);
 
-        // Collect all unique start times of notes we just hit
-        const hitBeat = expected.find((n) => n.midi === midi)?.startTime ?? beatRef.current;
+        const hitBeat =
+          expected.find((n) => n.midi === midi)?.startTime ?? beatRef.current;
 
-        // Advance playhead to the next note position when all required notes are hit
-        const allAtBeat = timeline.filter((n) => Math.abs(n.startTime - hitBeat) < 0.05);
-        const allHit = allAtBeat.every((n) => !waitingForNotesRef.current.has(n.midi ?? -1));
+        // Check if all required notes at this beat have been played
+        const allAtBeat = timeline.filter(
+          (n) => Math.abs(n.startTime - hitBeat) < 0.05,
+        );
+        const allHit = allAtBeat.every(
+          (n) => n.midi === null || !waitingForNotesRef.current.has(n.midi),
+        );
 
         if (allHit || waitingForNotesRef.current.size === 0) {
-          // Find the next note's startTime and jump there
+          // Find the next note group and jump there
           const nextNote = timeline[nextIndexRef.current];
           if (nextNote) {
-            setCurrentBeat(nextNote.startTime);
-            // Build the set of notes we need to wait for
-            const nextBeatNotes = getExpectedNotesAtBeat(timeline, nextNote.startTime, 0.05);
-            waitingForNotesRef.current = new Set(
-              nextBeatNotes.map((n) => n.midi).filter((m): m is number => m !== null),
+            const nextBeat = nextNote.startTime;
+            beatRef.current = nextBeat;
+            setCurrentBeatRef.current(nextBeat);
+
+            const nextBeatNotes = getExpectedNotesAtBeat(
+              timeline,
+              nextBeat,
+              0.05,
             );
-            setNextNoteIndex(nextIndexRef.current + 1);
+            waitingForNotesRef.current = new Set(
+              nextBeatNotes
+                .map((n) => n.midi)
+                .filter((m): m is number => m !== null),
+            );
+            nextIndexRef.current++;
+            setNextNoteIndexRef.current(nextIndexRef.current);
           } else {
-            // End of piece
-            setPlaybackState('finished');
+            setPlaybackStateRef.current('finished');
           }
         }
       } else {
-        // Wrong note played
-        recordMissed();
-      }
-
-      // Play guidance audio regardless
-      if (config.guidanceAudio) {
-        const expected2 = getExpectedNotesAtBeat(timeline, beatRef.current, 0.5);
-        expected2.forEach((n) => {
-          if (n.midi !== null) audioEngine.playNote(n.midi, 70);
-        });
+        // Wrong note
+        recordMissedRef.current();
       }
     }
-  }, [lastNoteEvent, playbackState, config, recordCorrect, recordMissed, setCurrentBeat, setNextNoteIndex, setPlaybackState]);
+  }, [lastNoteEvent, playbackState]);
 
-  /** Start a practice session */
-  const startSession = useCallback(() => {
+  // --- Session controls ---
+  const startSession = useCallback(async () => {
     if (!score) return;
+
+    // Auto-initialize the audio engine on Play (browser requires a user gesture)
+    if (!audioEngine.ready) {
+      audioEngine.init().catch(console.warn);
+    }
+
     resetSession();
-    const timeline = timelineRef.current;
+    const timeline = buildNoteTimeline(score, config);
+    timelineRef.current = timeline;
+
     if (timeline.length > 0) {
-      const firstBeat = timeline[0].startTime;
+      const firstBeat = timeline[0]!.startTime;
+      beatRef.current = firstBeat;
+      nextIndexRef.current = 0;
       setCurrentBeat(firstBeat);
+
       const firstNotes = getExpectedNotesAtBeat(timeline, firstBeat, 0.05);
       waitingForNotesRef.current = new Set(
         firstNotes.map((n) => n.midi).filter((m): m is number => m !== null),
       );
+    } else {
+      beatRef.current = 0;
+      nextIndexRef.current = 0;
     }
-    setPlaybackState('playing');
-  }, [score, resetSession, setCurrentBeat, setPlaybackState]);
 
-  /** Pause or resume */
+    setPlaybackState('playing');
+  }, [score, config, resetSession, setCurrentBeat, setPlaybackState]);
+
   const togglePause = useCallback(() => {
     if (playbackState === 'playing') {
       setPlaybackState('paused');
     } else if (playbackState === 'paused') {
+      lastTickTimeRef.current = null; // Reset delta on resume to avoid jump
       setPlaybackState('playing');
     }
   }, [playbackState, setPlaybackState]);
 
-  /** Stop and reset */
   const stopSession = useCallback(() => {
     setPlaybackState('idle');
     resetSession();
+    beatRef.current = 0;
+    nextIndexRef.current = 0;
   }, [setPlaybackState, resetSession]);
 
   return {

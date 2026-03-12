@@ -11,11 +11,11 @@ function AppContent() {
   useMIDI();
 
   return (
-    <div className="flex flex-col min-h-screen bg-neutral-950 text-white">
+    <div className="flex flex-col h-screen bg-neutral-950 text-white overflow-hidden">
       <Header />
 
-      {/* Main content area below the fixed header */}
-      <main className="flex flex-col flex-1 pt-16">
+      {/* Main content area below the fixed header — exact remaining height */}
+      <main className="flex flex-col flex-1 pt-16 min-h-0">
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/practice" element={<PracticePage />} />

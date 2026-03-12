@@ -96,7 +96,9 @@ export function playGuidanceNotes(
 ): void {
   for (const note of timeline) {
     if (Math.abs(note.startTime - beat) < tolerance && note.midi !== null) {
-      audioEngine.playNote(note.midi, 60, `${note.duration * 0.9}n`);
+      // duration in beats → seconds (assume 120 BPM as default)
+      const durationSec = note.duration * 0.5 * 0.9; // beats * (60/120 bpm) * 0.9
+      audioEngine.playNote(note.midi, 60, durationSec);
     }
   }
 }

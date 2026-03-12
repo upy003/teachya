@@ -1,41 +1,42 @@
 import { useEffect, useRef, useState } from 'react';
-import { OpenSheetMusicDisplay as OSMD, Cursor } from 'opensheetmusicdisplay';
+import { OpenSheetMusicDisplay as OSMD } from 'opensheetmusicdisplay';
 import { usePracticeStore } from '../../stores/practiceStore';
 import { useScoreStore } from '../../stores/scoreStore';
 
 interface SheetMusicRendererProps {
-  /** Whether to show the cursor following the playhead */
+  /** Show the cursor arrow following the playhead */
   showCursor?: boolean;
 }
 
 /**
  * Renders MusicXML sheet music using OpenSheetMusicDisplay.
- * Tracks the cursor position based on the current practice beat.
+ * Tracks the OSMD cursor position based on nextNoteIndex from the practice store.
  */
 export function SheetMusicRenderer({ showCursor = true }: SheetMusicRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OSMD | null>(null);
-  const cursorRef = useRef<Cursor | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { score } = useScoreStore();
-  const { currentBeat, playbackState } = usePracticeStore();
+  // Track how far the cursor has been advanced (in OSMD cursor steps)
+  const cursorStepRef = useRef(0);
 
-  // Initialize OSMD once on mount
+  const { score } = useScoreStore();
+  const { nextNoteIndex, playbackState } = usePracticeStore();
+
+  // --- Initialize OSMD once on mount ---
   useEffect(() => {
     if (!containerRef.current) return;
 
     const osmd = new OSMD(containerRef.current, {
       autoResize: true,
       backend: 'svg',
-      // Dark theme: white notes on transparent background
+      // Dark-mode friendly colors
       pageBackgroundColor: 'transparent',
-      defaultColorNotehead: '#ffffff',
+      defaultColorNotehead: '#e8e8f0',
       defaultColorStem: '#9ca3af',
       defaultColorRest: '#9ca3af',
       defaultColorLabel: '#d1d5db',
-      // Compact rendering
       drawingParameters: 'compacttight',
     });
 
@@ -46,61 +47,85 @@ export function SheetMusicRenderer({ showCursor = true }: SheetMusicRendererProp
     };
   }, []);
 
-  // Load score XML when it changes
+  // --- Load score when it changes ---
   useEffect(() => {
     if (!osmdRef.current || !score?.rawXml) return;
 
     setIsLoaded(false);
     setError(null);
+    cursorStepRef.current = 0;
 
     osmdRef.current
       .load(score.rawXml)
       .then(() => {
-        osmdRef.current!.render();
+        if (!osmdRef.current) return;
+        osmdRef.current.render();
         setIsLoaded(true);
 
         if (showCursor) {
-          osmdRef.current!.cursor.show();
-          cursorRef.current = osmdRef.current!.cursor;
+          osmdRef.current.cursor.reset();
+          osmdRef.current.cursor.show();
         }
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         setError('Failed to render sheet music: ' + String(err));
       });
   }, [score, showCursor]);
 
-  // Move cursor to follow the current beat
+  // --- Advance the OSMD cursor to match nextNoteIndex ---
   useEffect(() => {
-    if (!cursorRef.current || !isLoaded || playbackState === 'idle') return;
+    if (!osmdRef.current || !isLoaded || !showCursor) return;
 
-    try {
-      // Reset cursor and advance to the correct position
-      cursorRef.current.reset();
-      // Each cursor.next() advances by one note – we need to match our beat
-      // For simplicity, we re-advance each render based on the note index
-      // (OSMD cursor advances note by note)
-    } catch {
-      // Cursor operations may fail on edge cases – silently ignore
+    const cursor = osmdRef.current.cursor;
+
+    if (playbackState === 'idle') {
+      // Reset cursor to beginning when session stops
+      cursor.reset();
+      cursorStepRef.current = 0;
+      return;
     }
-  }, [currentBeat, isLoaded, playbackState]);
+
+    // Advance the cursor forward to match the current note index.
+    // OSMD cursor steps one note at a time via cursor.next().
+    const targetStep = nextNoteIndex;
+    const currentStep = cursorStepRef.current;
+
+    if (targetStep > currentStep) {
+      // Advance cursor forward
+      for (let i = currentStep; i < targetStep; i++) {
+        if (cursor.iterator.EndReached) break;
+        cursor.next();
+      }
+      cursorStepRef.current = targetStep;
+    } else if (targetStep < currentStep) {
+      // Went backward (e.g., after stop+restart): reset and re-advance
+      cursor.reset();
+      cursorStepRef.current = 0;
+      for (let i = 0; i < targetStep; i++) {
+        if (cursor.iterator.EndReached) break;
+        cursor.next();
+      }
+      cursorStepRef.current = targetStep;
+    }
+  }, [nextNoteIndex, isLoaded, showCursor, playbackState]);
 
   return (
     <div className="relative w-full h-full overflow-auto">
-      {/* Error state */}
+      {/* Error */}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="bg-red-900/30 border border-red-500/30 rounded-xl p-4 text-sm text-red-400">
+        <div className="absolute inset-0 flex items-center justify-center p-6">
+          <div className="bg-red-950/50 border border-red-500/30 rounded-xl p-5 text-sm text-red-300 max-w-md text-center">
             {error}
           </div>
         </div>
       )}
 
-      {/* Loading state */}
+      {/* Loading spinner */}
       {!isLoaded && !error && score && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-white/50">
+          <div className="flex flex-col items-center gap-3 text-white/40">
             <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm">Rendering score...</span>
+            <span className="text-sm">Rendering score…</span>
           </div>
         </div>
       )}
@@ -112,11 +137,10 @@ export function SheetMusicRenderer({ showCursor = true }: SheetMusicRendererProp
         </div>
       )}
 
-      {/* OSMD renders into this div */}
+      {/* OSMD renders into this container */}
       <div
         ref={containerRef}
-        className="w-full min-h-full p-6"
-        style={{ filter: 'invert(0)' }} // OSMD renders with its own colors
+        className="w-full min-h-full p-4"
       />
     </div>
   );

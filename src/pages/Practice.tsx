@@ -10,11 +10,17 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Upload } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-/** Full-screen practice view with dual-mode display and piano keyboard */
+/**
+ * Full-screen practice view.
+ * usePractice() is called ONLY here — not in child components —
+ * to prevent duplicate game loops.
+ */
 export function PracticePage() {
   const { score } = useScoreStore();
-  const { config } = usePracticeStore();
-  const { playbackState } = usePractice();
+  const { config, playbackState } = usePracticeStore();
+
+  // Single game-loop instance for the entire practice page
+  const { startSession, togglePause, stopSession } = usePractice();
 
   if (!score) {
     return (
@@ -54,7 +60,7 @@ export function PracticePage() {
             <p className="text-xs text-white/40 truncate">{score.composer}</p>
           )}
         </div>
-        <div className="text-xs text-white/30 tabular-nums">
+        <div className="text-xs text-white/30 tabular-nums font-mono">
           {Math.round(score.defaultTempo)} BPM
         </div>
       </div>
@@ -72,16 +78,20 @@ export function PracticePage() {
         )}
       </div>
 
-      {/* Piano keyboard */}
-      <div className="bg-neutral-950 border-t border-white/8">
+      {/* Piano keyboard (always visible at bottom) */}
+      <div className="bg-neutral-950 border-t border-white/8 shrink-0">
         <PianoKeyboard
           showNoteNames={config.showNoteNames}
-          height={140}
+          height={130}
         />
       </div>
 
-      {/* Practice controls */}
-      <PracticeControls />
+      {/* Practice controls — receive transport callbacks as props */}
+      <PracticeControls
+        startSession={startSession}
+        togglePause={togglePause}
+        stopSession={stopSession}
+      />
     </div>
   );
 }
